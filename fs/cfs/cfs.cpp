@@ -100,7 +100,8 @@ static void fill_metadata(const struct stat* st, CFsMetadata* out) {
     out->unix_gid = (uint32_t)st->st_gid;
     out->unix_ino = (uint64_t)st->st_ino;
     out->unix_dev = (uint64_t)st->st_dev;
-    out->is_readonly = (access(out->unix_mode & 0222 ? "" : "", W_OK) != 0);
+    // Read-only where no one may write it, by its mode.
+    out->is_readonly = (out->unix_mode & 0222) == 0;
 }
 #endif
 
