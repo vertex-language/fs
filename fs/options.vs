@@ -1,5 +1,7 @@
 package fs
 
+import "io"
+
 /// The kind of file system entry.
 public enum FileKind: Hashable, Equatable, CustomStringConvertible {
     case file
@@ -83,12 +85,9 @@ public struct OpenOptions {
     }
 }
 
-/// The reference position for a file seek operation.
-public enum SeekFrom {
-    case start(int64)
-    case current(int64)
-    case end(int64)
-}
+/// The reference position for a file seek operation: io's, so a File
+/// seeks as any io.Seeker does.
+public typealias SeekFrom = io.SeekFrom
 
 /// Options controlling file and directory copy behavior.
 public struct CopyOptions {

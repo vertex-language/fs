@@ -13,6 +13,8 @@ Standard file system library for the Vertex programming language, providing safe
 - **`fs`**: Core file system operations (`fs.ReadFile`, `fs.WriteFile`, `fs.Path`, `fs.File`, `fs.Dir`, `fs.ReadDir`, `fs.Metadata`, `fs.FileSystem`).
 - **`fs/memory`**: In-memory file system implementation (`memory.MemoryFileSystem`) for testing and virtual environments.
 
+`fs.File` is an `io.Reader`, `io.Writer`, `io.Seeker` and `io.Closer`, so the `io` package's functions and adapters take it: `io.Copy(from: &file, to: &socket)`, `io.BufferedReader(file).ReadLine()`. `fs.SeekFrom` is `io.SeekFrom`.
+
 ---
 
 ## Quick Start

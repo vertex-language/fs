@@ -154,6 +154,11 @@ public struct File {
         return try Metadata()
     }
 
+    /// Nothing: a File keeps no buffer in the process, so every Write has
+    /// reached the operating system when it returns. It is here so that a
+    /// File is an io.Writer; `Sync` is what makes the data durable.
+    public func Flush() throws {}
+
     /// Closes the open file handle.
     public func Close() throws {
         let rc = cfs_close(Fd)
