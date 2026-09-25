@@ -18,6 +18,7 @@
     #include <time.h>
     #include <sys/time.h>
     #include <errno.h>
+    #include <sys/mman.h>
     #if defined(__APPLE__)
         #include <sys/clonefile.h>
         #include <copyfile.h>
@@ -792,6 +793,38 @@ int32_t cfs_temp_dir(const char* prefix, char* out_buf, int32_t max_len) {
 #else
     return CFS_ERR_GENERIC;
 #endif
+}
+
+int32_t cfs_map(int32_t fd, int64_t len, void** out_addr) {
+    if (!out_addr || len <= 0) return CFS_ERR_GENERIC;
+#if !defined(_WIN32)
+    void* p = mmap(NULL, (size_t)len, PROT_READ, MAP_PRIVATE, fd, 0);
+    if (p == MAP_FAILED) return map_error(errno);
+    *out_addr = p;
+    return CFS_OK;
+#else
+    HANDLE file = (HANDLE)_get_osfhandle(fd);
+    if (file == INVALID_HANDLE_VALUE) return CFS_ERR_GENERIC;
+    HANDLE m = CreateFileMappingW(file, NULL, PAGE_READONLY, (DWORD)((uint64_t)len >> 32), (DWORD)len, NULL);
+    if (!m) return map_error(GetLastError());
+    void* p = MapViewOfFile(m, FILE_MAP_READ, 0, 0, (SIZE_T)len);
+    DWORD err = GetLastError();
+    CloseHandle(m);
+    if (!p) return map_error(err);
+    *out_addr = p;
+    return CFS_OK;
+#endif
+}
+
+int32_t cfs_unmap(void* addr, int64_t len) {
+    if (!addr) return CFS_OK;
+#if !defined(_WIN32)
+    if (munmap(addr, (size_t)len) < 0) return map_error(errno);
+#else
+    (void)len;
+    if (!UnmapViewOfFile(addr)) return map_error(GetLastError());
+#endif
+    return CFS_OK;
 }
 
 } // extern "C"

@@ -9,6 +9,8 @@ let package = Package(
     products: [
         .library(name: "fs", targets: ["fs"]),
         .library(name: "fs/memory", targets: ["fs_memory"]),
+        .library(name: "fs/mmap", targets: ["mmap"]),
+        .executable(name: "test-mmap", targets: ["test_mmap"]),
         .executable(name: "check", targets: ["check"]),
         .executable(name: "fs-cat", targets: ["example_cat"]),
         .executable(name: "fs-copy", targets: ["example_copy"]),
@@ -32,6 +34,17 @@ let package = Package(
             name: "fs_memory",
             dependencies: ["fs"],
             path: "memory"
+        ),
+        // Files mapped into memory, read in place.
+        .target(
+            name: "mmap",
+            dependencies: ["fs", "cfs"],
+            path: "mmap"
+        ),
+        .executableTarget(
+            name: "test_mmap",
+            dependencies: ["fs", "mmap"],
+            path: "tests/mmap"
         ),
         // Comprehensive test suite.
         .executableTarget(

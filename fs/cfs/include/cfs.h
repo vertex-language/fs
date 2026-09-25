@@ -107,6 +107,11 @@ int32_t cfs_readlink(const char* path, char* out_buf, int32_t max_len);
 int32_t cfs_symlink(const char* target, const char* link);
 int32_t cfs_temp_dir(const char* prefix, char* out_buf, int32_t max_len);
 
+// Memory mapping: the first len bytes of the open file fd, read-only and
+// private, at *out_addr. The mapping outlives fd. len must be above zero.
+int32_t cfs_map(int32_t fd, int64_t len, void** out_addr);
+int32_t cfs_unmap(void* addr, int64_t len);
+
 #ifdef __cplusplus
 }
 #endif

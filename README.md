@@ -12,6 +12,7 @@ Standard file system library for the Vertex programming language, providing safe
 
 - **`fs`**: Core file system operations (`fs.ReadFile`, `fs.WriteFile`, `fs.Path`, `fs.File`, `fs.Dir`, `fs.ReadDir`, `fs.Metadata`, `fs.FileSystem`).
 - **`fs/memory`**: In-memory file system implementation (`memory.MemoryFileSystem`) for testing and virtual environments.
+- **`fs/mmap`**: A file mapped into memory, read-only (`mmap.Map(path)` → `mmap.Mapping`). Its bytes are read in place and unmapped when the last reference goes. Model weights load through it. Built on `cfs_map` and `cfs_unmap` (`mmap` on POSIX, `MapViewOfFile` on Windows).
 
 `fs.File` is an `io.Reader`, `io.Writer`, `io.Seeker` and `io.Closer`, so the `io` package's functions and adapters take it: `io.Copy(from: &file, to: &socket)`, `io.BufferedReader(file).ReadLine()`. `fs.SeekFrom` is `io.SeekFrom`.
 
@@ -115,6 +116,7 @@ fs/
 │       ├── include/cfs.h
 │       └── cfs.cpp             # macOS (Darwin) / Linux / Windows implementation
 ├── memory/                     # Subpackage 'fs/memory'
+├── mmap/                       # Subpackage 'fs/mmap'
 │   └── memory_fs.vs            # MemoryFileSystem conforming to FileSystem
 ├── examples/
 │   ├── cat/                    # File reader CLI
