@@ -798,8 +798,13 @@ int32_t cfs_temp_dir(const char* prefix, char* out_buf, int32_t max_len) {
 int32_t cfs_map(int32_t fd, int64_t len, void** out_addr) {
     if (!out_addr || len <= 0) return CFS_ERR_GENERIC;
 #if !defined(_WIN32)
-    void* p = mmap(NULL, (size_t)len, PROT_READ, MAP_PRIVATE, fd, 0);
+    // Shared, not private: read-only either way, but a private mapping's
+    // pages are copy-on-write, and a GPU reading them in place (model
+    // weights) pays for it. The pages are asked for ahead of use, as
+    // llama.cpp does.
+    void* p = mmap(NULL, (size_t)len, PROT_READ, MAP_SHARED, fd, 0);
     if (p == MAP_FAILED) return map_error(errno);
+    posix_madvise(p, (size_t)len, POSIX_MADV_WILLNEED);
     *out_addr = p;
     return CFS_OK;
 #else
