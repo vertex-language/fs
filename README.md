@@ -1,10 +1,10 @@
 # fs
 
-[![package: stdlib](https://img.shields.io/badge/package-stdlib-f4f4f5?style=flat-square&labelColor=e4e4e7&color=18181b)](https://github.com/vertex-language)
+[![package: vs-package](https://img.shields.io/badge/package-vs--package-f4f4f5?style=flat-square&labelColor=e4e4e7&color=18181b)](https://github.com/vertex-language)
 [![storage: fs | memory](https://img.shields.io/badge/storage-fs%20%7C%20memory-f4f4f5?style=flat-square&labelColor=e4e4e7&color=18181b)](https://github.com/vertex-language/fs)
 [![runtime: async + sync](https://img.shields.io/badge/runtime-async%20%2B%20sync-f4f4f5?style=flat-square&labelColor=e4e4e7&color=18181b)](https://github.com/vertex-language)
 
-Standard file system library for the Vertex programming language, providing safe, high-performance file operations, capability directory handles, paths, metadata, and virtual file systems over direct operating system ABIs.
+File system library providing file operations, capability directory handles, paths, metadata, and virtual file systems.
 
 ---
 
@@ -19,6 +19,12 @@ Standard file system library for the Vertex programming language, providing safe
 ---
 
 ## Quick Start
+
+Run any entry point with:
+
+```bash
+vsc run main.vs
+```
 
 ### Basic File Operations
 
