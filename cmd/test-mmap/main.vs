@@ -1,8 +1,10 @@
 // fs/mmap: a file's bytes mapped, read in place, the same as reading it.
 package main
 
-import "fs"
-import "fs/mmap"
+import (
+    "fs"
+    "fs/mmap"
+)
 
 var failures = 0
 

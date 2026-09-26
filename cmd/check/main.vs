@@ -1,8 +1,10 @@
 // fs comprehensive test suite.
 package main
 
-import "fs"
-import "fs/memory"
+import (
+    "fs"
+    "fs/memory"
+)
 
 var failures: int32 = 0
 

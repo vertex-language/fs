@@ -20,10 +20,18 @@ File system library providing file operations, capability directory handles, pat
 
 ## Quick Start
 
-Run any entry point with:
+Run tools and test suites in `cmd/` directly with `vsc run`:
 
 ```bash
-vsc run main.vs
+# Run comprehensive check suite
+vsc run check
+
+# Run cat or copy tools
+vsc run fs-cat -- README.md
+vsc run fs-copy -- src/file.txt dst/file.txt
+
+# Run memory-mapped file tests
+vsc run test-mmap
 ```
 
 ### Basic File Operations
