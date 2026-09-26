@@ -1,4 +1,6 @@
-#include "cfs.h"
+module;
+#include <stdint.h>
+#include <stddef.h>
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -25,7 +27,79 @@
     #endif
 #endif
 
-extern "C" {
+export module fs;
+
+enum {
+    CFS_OK                   = 0,
+    CFS_ERR_GENERIC          = -1,
+    CFS_ERR_NOT_FOUND        = -2,
+    CFS_ERR_ALREADY_EXISTS   = -3,
+    CFS_ERR_PERMISSION       = -4,
+    CFS_ERR_NOT_DIR          = -5,
+    CFS_ERR_IS_DIR           = -6,
+    CFS_ERR_DIR_NOT_EMPTY    = -7,
+    CFS_ERR_READ_ONLY        = -8,
+    CFS_ERR_NO_SPACE         = -9,
+    CFS_ERR_TOO_MANY_OPEN    = -10,
+    CFS_ERR_XDEV             = -11,
+    CFS_ERR_INVALID_PATH     = -12,
+    CFS_ERR_INTERRUPTED      = -13
+};
+
+// Open flags
+enum {
+    CFS_OPEN_READ        = 1 << 0,
+    CFS_OPEN_WRITE       = 1 << 1,
+    CFS_OPEN_APPEND      = 1 << 2,
+    CFS_OPEN_CREATE      = 1 << 3,
+    CFS_OPEN_TRUNCATE    = 1 << 4,
+    CFS_OPEN_EXCL        = 1 << 5
+};
+
+// File kind
+enum {
+    CFS_KIND_FILE        = 1,
+    CFS_KIND_DIRECTORY   = 2,
+    CFS_KIND_SYMLINK     = 3,
+    CFS_KIND_OTHER       = 4
+};
+
+#pragma pack(push, 8)
+typedef struct {
+    uint32_t kind;             // CFS_KIND_*
+    int64_t  size;
+    int64_t  mod_sec;
+    int32_t  mod_nsec;
+    int64_t  acc_sec;
+    int32_t  acc_nsec;
+    int64_t  birth_sec;
+    int32_t  birth_nsec;
+    uint32_t unix_mode;
+    uint32_t unix_uid;
+    uint32_t unix_gid;
+    uint64_t unix_ino;
+    uint64_t unix_dev;
+    uint32_t win_attrs;
+    int32_t  is_readonly;
+} CFsMetadata;
+#pragma pack(pop)
+
+// Last OS error code (errno or GetLastError)
+
+// What the package's Vertex calls the codes above.
+export namespace Code {
+    constexpr int32_t ok = 0, generic = -1, notFound = -2, alreadyExists = -3, permissionDenied = -4;
+    constexpr int32_t notDir = -5, isDir = -6, dirNotEmpty = -7, readOnly = -8, noSpace = -9;
+    constexpr int32_t tooManyOpen = -10, xdev = -11, invalidPath = -12, interrupted = -13;
+}
+export namespace OpenFlag {
+    constexpr int32_t read = 1, write = 2, append = 4, create = 8, truncate = 16, excl = 32;
+}
+export namespace KindCode {
+    constexpr int32_t file = 1, directory = 2, symlink = 3, other = 4;
+}
+
+
 
 #if defined(_WIN32)
 static int map_error(DWORD err) {
@@ -106,7 +180,7 @@ static void fill_metadata(const struct stat* st, CFsMetadata* out) {
 }
 #endif
 
-int32_t cfs_last_error(void) {
+export int32_t cfs_last_error(void) {
 #if defined(_WIN32)
     return (int32_t)GetLastError();
 #else
@@ -114,7 +188,7 @@ int32_t cfs_last_error(void) {
 #endif
 }
 
-int64_t cfs_now(int32_t* nanos) {
+export int64_t cfs_now(int32_t* nanos) {
 #if defined(_WIN32)
     FILETIME ft;
     GetSystemTimePreciseAsFileTime(&ft);
@@ -132,7 +206,7 @@ int64_t cfs_now(int32_t* nanos) {
 #endif
 }
 
-int32_t cfs_read_file(const char* path, uint8_t** out_buf, int64_t* out_len) {
+export int32_t cfs_read_file(const char* path, uint8_t** out_buf, int64_t* out_len) {
     if (!path || !out_buf || !out_len) {
         return CFS_ERR_INVALID_PATH;
     }
@@ -200,11 +274,11 @@ int32_t cfs_read_file(const char* path, uint8_t** out_buf, int64_t* out_len) {
 #endif
 }
 
-void cfs_free_buffer(uint8_t* buf) {
+export void cfs_free_buffer(uint8_t* buf) {
     if (buf) free(buf);
 }
 
-int32_t cfs_read_file_into(const char* path, void* buf, int64_t max_len, int64_t* out_read) {
+export int32_t cfs_read_file_into(const char* path, void* buf, int64_t max_len, int64_t* out_read) {
     if (!path || !buf || !out_read) return CFS_ERR_INVALID_PATH;
     *out_read = 0;
 #if !defined(_WIN32)
@@ -230,7 +304,8 @@ int32_t cfs_read_file_into(const char* path, void* buf, int64_t max_len, int64_t
 #endif
 }
 
-int32_t cfs_write_file(const char* path, const uint8_t* data, int64_t len, int32_t atomic) {
+export int32_t cfs_write_file(const char* path, const void* bytes, int64_t len, int32_t atomic) {
+    const uint8_t* data = static_cast<const uint8_t*>(bytes);
     if (!path) return CFS_ERR_INVALID_PATH;
 
 #if !defined(_WIN32)
@@ -243,7 +318,9 @@ int32_t cfs_write_file(const char* path, const uint8_t* data, int64_t len, int32
         }
         int64_t written = 0;
         while (written < len) {
-            ssize_t n = write(fd, data + written, (size_t)(len - written));
+            // One write() takes at most INT_MAX bytes on macOS (EINVAL past it).
+            int64_t step = len - written > (int64_t(1) << 30) ? (int64_t(1) << 30) : len - written;
+            ssize_t n = write(fd, data + written, (size_t)step);
             if (n < 0) {
                 if (errno == EINTR) continue;
                 close(fd);
@@ -270,7 +347,9 @@ int32_t cfs_write_file(const char* path, const uint8_t* data, int64_t len, int32
         if (fd < 0) return map_error(errno);
         int64_t written = 0;
         while (written < len) {
-            ssize_t n = write(fd, data + written, (size_t)(len - written));
+            // One write() takes at most INT_MAX bytes on macOS (EINVAL past it).
+            int64_t step = len - written > (int64_t(1) << 30) ? (int64_t(1) << 30) : len - written;
+            ssize_t n = write(fd, data + written, (size_t)step);
             if (n < 0) {
                 if (errno == EINTR) continue;
                 close(fd);
@@ -294,7 +373,8 @@ int32_t cfs_write_file(const char* path, const uint8_t* data, int64_t len, int32
 #endif
 }
 
-int32_t cfs_append_file(const char* path, const uint8_t* data, int64_t len) {
+export int32_t cfs_append_file(const char* path, const void* bytes, int64_t len) {
+    const uint8_t* data = static_cast<const uint8_t*>(bytes);
     if (!path) return CFS_ERR_INVALID_PATH;
 
 #if !defined(_WIN32)
@@ -302,7 +382,9 @@ int32_t cfs_append_file(const char* path, const uint8_t* data, int64_t len) {
     if (fd < 0) return map_error(errno);
     int64_t written = 0;
     while (written < len) {
-        ssize_t n = write(fd, data + written, (size_t)(len - written));
+        // One write() takes at most INT_MAX bytes on macOS (EINVAL past it).
+            int64_t step = len - written > (int64_t(1) << 30) ? (int64_t(1) << 30) : len - written;
+            ssize_t n = write(fd, data + written, (size_t)step);
         if (n < 0) {
             if (errno == EINTR) continue;
             close(fd);
@@ -325,7 +407,7 @@ int32_t cfs_append_file(const char* path, const uint8_t* data, int64_t len) {
 #endif
 }
 
-int32_t cfs_open(const char* path, int32_t flags, uint32_t mode) {
+export int32_t cfs_open(const char* path, int32_t flags, uint32_t mode) {
     if (!path) return CFS_ERR_INVALID_PATH;
 
 #if !defined(_WIN32)
@@ -353,7 +435,7 @@ int32_t cfs_open(const char* path, int32_t flags, uint32_t mode) {
 #endif
 }
 
-int32_t cfs_close(int32_t fd) {
+export int32_t cfs_close(int32_t fd) {
 #if !defined(_WIN32)
     if (close(fd) < 0) return map_error(errno);
     return CFS_OK;
@@ -362,7 +444,7 @@ int32_t cfs_close(int32_t fd) {
 #endif
 }
 
-int64_t cfs_read(int32_t fd, void* buf, int32_t count) {
+export int64_t cfs_read(int32_t fd, void* buf, int32_t count) {
 #if !defined(_WIN32)
     ssize_t n = read(fd, buf, (size_t)count);
     if (n < 0) return map_error(errno);
@@ -372,7 +454,7 @@ int64_t cfs_read(int32_t fd, void* buf, int32_t count) {
 #endif
 }
 
-int64_t cfs_pread(int32_t fd, void* buf, int32_t count, int64_t offset) {
+export int64_t cfs_pread(int32_t fd, void* buf, int32_t count, int64_t offset) {
 #if !defined(_WIN32)
     ssize_t n = pread(fd, buf, (size_t)count, (off_t)offset);
     if (n < 0) return map_error(errno);
@@ -382,7 +464,7 @@ int64_t cfs_pread(int32_t fd, void* buf, int32_t count, int64_t offset) {
 #endif
 }
 
-int64_t cfs_write(int32_t fd, const void* buf, int32_t count) {
+export int64_t cfs_write(int32_t fd, const void* buf, int32_t count) {
 #if !defined(_WIN32)
     ssize_t n = write(fd, buf, (size_t)count);
     if (n < 0) return map_error(errno);
@@ -392,7 +474,7 @@ int64_t cfs_write(int32_t fd, const void* buf, int32_t count) {
 #endif
 }
 
-int64_t cfs_pwrite(int32_t fd, const void* buf, int32_t count, int64_t offset) {
+export int64_t cfs_pwrite(int32_t fd, const void* buf, int32_t count, int64_t offset) {
 #if !defined(_WIN32)
     ssize_t n = pwrite(fd, buf, (size_t)count, (off_t)offset);
     if (n < 0) return map_error(errno);
@@ -402,7 +484,7 @@ int64_t cfs_pwrite(int32_t fd, const void* buf, int32_t count, int64_t offset) {
 #endif
 }
 
-int64_t cfs_seek(int32_t fd, int64_t offset, int32_t whence) {
+export int64_t cfs_seek(int32_t fd, int64_t offset, int32_t whence) {
 #if !defined(_WIN32)
     int posix_whence = SEEK_SET;
     if (whence == 1) posix_whence = SEEK_CUR;
@@ -415,7 +497,7 @@ int64_t cfs_seek(int32_t fd, int64_t offset, int32_t whence) {
 #endif
 }
 
-int32_t cfs_truncate(int32_t fd, int64_t length) {
+export int32_t cfs_truncate(int32_t fd, int64_t length) {
 #if !defined(_WIN32)
     if (ftruncate(fd, (off_t)length) < 0) return map_error(errno);
     return CFS_OK;
@@ -424,7 +506,7 @@ int32_t cfs_truncate(int32_t fd, int64_t length) {
 #endif
 }
 
-int32_t cfs_sync(int32_t fd, int32_t data_only) {
+export int32_t cfs_sync(int32_t fd, int32_t data_only) {
 #if !defined(_WIN32)
 #if defined(__APPLE__)
     if (fcntl(fd, F_FULLFSYNC) < 0) return map_error(errno);
@@ -441,7 +523,7 @@ int32_t cfs_sync(int32_t fd, int32_t data_only) {
 #endif
 }
 
-int32_t cfs_open_dir(const char* path, int32_t confined) {
+export int32_t cfs_open_dir(const char* path, int32_t confined) {
     if (!path) return CFS_ERR_INVALID_PATH;
 #if !defined(_WIN32)
     int fd = open(path, O_RDONLY | O_DIRECTORY);
@@ -452,7 +534,7 @@ int32_t cfs_open_dir(const char* path, int32_t confined) {
 #endif
 }
 
-int32_t cfs_read_dir_records(int32_t dir_fd, uint8_t* out_buf, int32_t max_bytes,
+export int32_t cfs_read_dir_records(int32_t dir_fd, uint8_t* out_buf, int32_t max_bytes,
                             int32_t* out_record_count, int32_t* out_bytes_written) {
     if (!out_buf || !out_record_count || !out_bytes_written) return CFS_ERR_GENERIC;
     *out_record_count = 0;
@@ -513,7 +595,7 @@ int32_t cfs_read_dir_records(int32_t dir_fd, uint8_t* out_buf, int32_t max_bytes
 #endif
 }
 
-int32_t cfs_mkdir(const char* path, uint32_t mode, int32_t recursive) {
+export int32_t cfs_mkdir(const char* path, uint32_t mode, int32_t recursive) {
     if (!path) return CFS_ERR_INVALID_PATH;
     if (mode == 0) mode = 0777;
 
@@ -546,7 +628,7 @@ int32_t cfs_mkdir(const char* path, uint32_t mode, int32_t recursive) {
 #endif
 }
 
-int32_t cfs_remove(const char* path) {
+export int32_t cfs_remove(const char* path) {
     if (!path) return CFS_ERR_INVALID_PATH;
 #if !defined(_WIN32)
     if (unlink(path) == 0) return CFS_OK;
@@ -593,12 +675,12 @@ static int remove_all_internal(const char* path) {
 #endif
 }
 
-int32_t cfs_remove_all(const char* path) {
+export int32_t cfs_remove_all(const char* path) {
     if (!path) return CFS_ERR_INVALID_PATH;
     return remove_all_internal(path);
 }
 
-int32_t cfs_rename(const char* src, const char* dst, int32_t replace) {
+export int32_t cfs_rename(const char* src, const char* dst, int32_t replace) {
     if (!src || !dst) return CFS_ERR_INVALID_PATH;
 #if !defined(_WIN32)
     if (!replace) {
@@ -612,7 +694,7 @@ int32_t cfs_rename(const char* src, const char* dst, int32_t replace) {
 #endif
 }
 
-int32_t cfs_copy_file(const char* src, const char* dst, int32_t overwrite) {
+export int32_t cfs_copy_file(const char* src, const char* dst, int32_t overwrite) {
     if (!src || !dst) return CFS_ERR_INVALID_PATH;
 
 #if defined(__APPLE__)
@@ -718,7 +800,7 @@ int32_t cfs_fstat(int32_t fd, CFsMetadata* out_meta) {
 #endif
 }
 
-int32_t cfs_stat_raw(const char* path, int32_t follow_symlinks, int64_t* out_fields) {
+export int32_t cfs_stat_raw(const char* path, int32_t follow_symlinks, int64_t* out_fields) {
     if (!path || !out_fields) return CFS_ERR_INVALID_PATH;
     CFsMetadata meta;
     int32_t rc = cfs_stat(path, follow_symlinks, &meta);
@@ -727,7 +809,7 @@ int32_t cfs_stat_raw(const char* path, int32_t follow_symlinks, int64_t* out_fie
     return CFS_OK;
 }
 
-int32_t cfs_fstat_raw(int32_t fd, int64_t* out_fields) {
+export int32_t cfs_fstat_raw(int32_t fd, int64_t* out_fields) {
     if (!out_fields) return CFS_ERR_GENERIC;
     CFsMetadata meta;
     int32_t rc = cfs_fstat(fd, &meta);
@@ -736,7 +818,7 @@ int32_t cfs_fstat_raw(int32_t fd, int64_t* out_fields) {
     return CFS_OK;
 }
 
-int32_t cfs_canonical(const char* path, char* out_buf, int32_t max_len) {
+export int32_t cfs_canonical(const char* path, char* out_buf, int32_t max_len) {
     if (!path || !out_buf || max_len <= 0) return CFS_ERR_INVALID_PATH;
 #if !defined(_WIN32)
     char resolved[1024];
@@ -750,7 +832,7 @@ int32_t cfs_canonical(const char* path, char* out_buf, int32_t max_len) {
 #endif
 }
 
-int32_t cfs_readlink(const char* path, char* out_buf, int32_t max_len) {
+export int32_t cfs_readlink(const char* path, char* out_buf, int32_t max_len) {
     if (!path || !out_buf || max_len <= 0) return CFS_ERR_INVALID_PATH;
 #if !defined(_WIN32)
     ssize_t n = readlink(path, out_buf, (size_t)(max_len - 1));
@@ -762,7 +844,7 @@ int32_t cfs_readlink(const char* path, char* out_buf, int32_t max_len) {
 #endif
 }
 
-int32_t cfs_symlink(const char* target, const char* link) {
+export int32_t cfs_symlink(const char* target, const char* link) {
     if (!target || !link) return CFS_ERR_INVALID_PATH;
 #if !defined(_WIN32)
     if (symlink(target, link) < 0) return map_error(errno);
@@ -772,7 +854,7 @@ int32_t cfs_symlink(const char* target, const char* link) {
 #endif
 }
 
-int32_t cfs_temp_dir(const char* prefix, char* out_buf, int32_t max_len) {
+export int32_t cfs_temp_dir(const char* prefix, char* out_buf, int32_t max_len) {
     if (!out_buf || max_len <= 0) return CFS_ERR_GENERIC;
 #if !defined(_WIN32)
     const char* base = getenv("TMPDIR");
@@ -794,42 +876,3 @@ int32_t cfs_temp_dir(const char* prefix, char* out_buf, int32_t max_len) {
     return CFS_ERR_GENERIC;
 #endif
 }
-
-int32_t cfs_map(int32_t fd, int64_t len, void** out_addr) {
-    if (!out_addr || len <= 0) return CFS_ERR_GENERIC;
-#if !defined(_WIN32)
-    // Shared, not private: read-only either way, but a private mapping's
-    // pages are copy-on-write, and a GPU reading them in place (model
-    // weights) pays for it. The pages are asked for ahead of use, as
-    // llama.cpp does.
-    void* p = mmap(NULL, (size_t)len, PROT_READ, MAP_SHARED, fd, 0);
-    if (p == MAP_FAILED) return map_error(errno);
-    posix_madvise(p, (size_t)len, POSIX_MADV_WILLNEED);
-    *out_addr = p;
-    return CFS_OK;
-#else
-    HANDLE file = (HANDLE)_get_osfhandle(fd);
-    if (file == INVALID_HANDLE_VALUE) return CFS_ERR_GENERIC;
-    HANDLE m = CreateFileMappingW(file, NULL, PAGE_READONLY, (DWORD)((uint64_t)len >> 32), (DWORD)len, NULL);
-    if (!m) return map_error(GetLastError());
-    void* p = MapViewOfFile(m, FILE_MAP_READ, 0, 0, (SIZE_T)len);
-    DWORD err = GetLastError();
-    CloseHandle(m);
-    if (!p) return map_error(err);
-    *out_addr = p;
-    return CFS_OK;
-#endif
-}
-
-int32_t cfs_unmap(void* addr, int64_t len) {
-    if (!addr) return CFS_OK;
-#if !defined(_WIN32)
-    if (munmap(addr, (size_t)len) < 0) return map_error(errno);
-#else
-    (void)len;
-    if (!UnmapViewOfFile(addr)) return map_error(GetLastError());
-#endif
-    return CFS_OK;
-}
-
-} // extern "C"

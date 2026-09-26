@@ -3,7 +3,7 @@ package main
 import "fs"
 
 func main() -> int32 {
-    let file = fs.Path("package.vs")
+    let file = fs.Path("vs.mod")
     do {
         let text = try fs.ReadText(file)
         print(text)

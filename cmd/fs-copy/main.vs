@@ -3,8 +3,8 @@ package main
 import "fs"
 
 func main() -> int32 {
-    let src = fs.Path("package.vs")
-    let dst = fs.Path("package.vs.copy")
+    let src = fs.Path("vs.mod")
+    let dst = fs.Path("vs.mod.copy")
     do {
         try fs.Copy(src, dst)
         let size = try fs.Metadata(dst).Size

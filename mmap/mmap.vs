@@ -5,12 +5,6 @@ package mmap
 
 import "fs"
 
-@_silgen_name("cfs_map")
-func cfs_map(_ fd: int32, _ len: int64, _ out: UnsafeMutablePointer<UnsafeMutableRawPointer?>) -> int32
-
-@_silgen_name("cfs_unmap")
-func cfs_unmap(_ addr: UnsafeMutableRawPointer?, _ len: int64) -> int32
-
 /// MapError is a mapping the operating system refused.
 public enum MapError: Error {
     case failed(code: int32, path: string)
@@ -18,7 +12,7 @@ public enum MapError: Error {
     public var Message: string {
         switch self {
         case .failed(let code, let path):
-            return "cannot map \(path) (cfs error \(code))"
+            return "cannot map \(path) (error \(code))"
         }
     }
 }
@@ -37,7 +31,7 @@ public final class Mapping {
 
     deinit {
         if _addr != nil {
-            _ = cfs_unmap(_addr, int64(Count))
+            _ = unmap(_addr, int64(Count))
         }
     }
 
@@ -73,7 +67,7 @@ public func Map(_ path: fs.Path) throws -> Mapping {
         return Mapping(nil, 0)
     }
     var addr: UnsafeMutableRawPointer? = nil
-    let rc = cfs_map(f.Fd, size, &addr)
+    let rc = map(f.Fd, size, &addr)
     if rc != 0 {
         throw MapError.failed(code: rc, path: path.Value)
     }

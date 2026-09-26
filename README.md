@@ -12,7 +12,7 @@ File system library providing file operations, capability directory handles, pat
 
 - **`fs`**: Core file system operations (`fs.ReadFile`, `fs.WriteFile`, `fs.Path`, `fs.File`, `fs.Dir`, `fs.ReadDir`, `fs.Metadata`, `fs.FileSystem`).
 - **`fs/memory`**: In-memory file system implementation (`memory.MemoryFileSystem`) for testing and virtual environments.
-- **`fs/mmap`**: A file mapped into memory, read-only (`mmap.Map(path)` → `mmap.Mapping`). Its bytes are read in place and unmapped when the last reference goes. Model weights load through it. Built on `cfs_map` and `cfs_unmap` (`mmap` on POSIX, `MapViewOfFile` on Windows).
+- **`fs/mmap`**: A file mapped into memory, read-only (`mmap.Map(path)` → `mmap.Mapping`). Its bytes are read in place and unmapped when the last reference goes. Model weights load through it. Built on its own C++ module, `fs.mmap` (`mmap` on POSIX, `MapViewOfFile` on Windows).
 
 `fs.File` is an `io.Reader`, `io.Writer`, `io.Seeker` and `io.Closer`, so the `io` package's functions and adapters take it: `io.Copy(from: &file, to: &socket)`, `io.BufferedReader(file).ReadLine()`. `fs.SeekFrom` is `io.SeekFrom`.
 
@@ -105,30 +105,25 @@ func main() -> int32 {
 ## Layout
 
 ```
-fs/
-├── package.vs                  # PackageDescription manifest
-├── fs/                         # Public 'fs' package
-│   ├── bindings.vs             # @_silgen_name C ABI bridges
-│   ├── path.vs                 # Path type and lexical operations
-│   ├── options.vs              # OpenOptions, FileKind, SeekFrom, CopyOptions
-│   ├── file.vs                 # File handles, streaming & positional I/O
-│   ├── dir.vs                  # Dir capability handles & confinement
-│   ├── entries.vs              # DirEntry, ReadDir, Walk
-│   ├── operations.vs           # Whole-file read/write, copy, move, symlink
-│   ├── metadata.vs             # Metadata, UnixMetadata, Timestamp
-│   ├── filesystem.vs           # FileSystem protocol & Local implementation
-│   ├── error.vs                # FsError enum & error translation
-│   └── cfs/                    # Native C ABI bridge
-│       ├── include/cfs.h
-│       └── cfs.cpp             # macOS (Darwin) / Linux / Windows implementation
-├── memory/                     # Subpackage 'fs/memory'
-├── mmap/                       # Subpackage 'fs/mmap'
-│   └── memory_fs.vs            # MemoryFileSystem conforming to FileSystem
-├── examples/
-│   ├── cat/                    # File reader CLI
-│   └── copy/                   # File & directory cloner
-└── tests/
-    └── check/                  # Test suite covering paths, files, dirs, errors, memory fs
+fs/                             # import "fs"
+├── vs.mod                      # module github.com/vertex-language/fs
+├── native.cpp                  # export module fs; the OS calls (Darwin / Linux / Windows)
+├── path.vs                     # Path type and lexical operations
+├── options.vs                  # OpenOptions, FileKind, SeekFrom, CopyOptions
+├── file.vs                     # File handles, streaming & positional I/O
+├── dir.vs                      # Dir capability handles & confinement
+├── entries.vs                  # DirEntry, ReadDir, Walk
+├── operations.vs               # Whole-file read/write, copy, move, symlink
+├── metadata.vs                 # Metadata, UnixMetadata, Timestamp
+├── filesystem.vs               # FileSystem protocol & Local implementation
+├── error.vs                    # FsError enum & error translation
+├── memory/                     # import "fs/memory": MemoryFileSystem conforming to FileSystem
+├── mmap/                       # import "fs/mmap": mmap.vs + native.cpp (export module fs.mmap;)
+└── cmd/
+    ├── check/                  # Test suite covering paths, files, dirs, errors, memory fs
+    ├── test-mmap/              # fs/mmap tests
+    ├── fs-cat/                 # File reader CLI
+    └── fs-copy/                # File cloner
 ```
 
 ---
@@ -140,6 +135,9 @@ Execute examples or the test suite directly with `vsc`:
 ```bash
 # Run comprehensive check suite
 vsc run check
+
+# Run the mmap tests
+vsc run test-mmap
 
 # Run cat example
 vsc run fs-cat

@@ -13,7 +13,7 @@ public struct File {
     /// Reads up to buffer.count bytes into buffer. Returns number of bytes read (0 at EOF).
     public func Read(into buffer: inout [uint8]) throws -> int {
         if buffer.isEmpty { return 0 }
-        let count = int32(buffer.count)
+        let count = int32(min(buffer.count, 1 << 30))
         let n = buffer.withUnsafeMutableBytes { raw in
             cfs_read(Fd, raw.baseAddress!, count)
         }
@@ -26,7 +26,7 @@ public struct File {
     /// Reads up to buffer.count bytes starting at offset without changing the file position.
     public func Read(into buffer: inout [uint8], at offset: int64) throws -> int {
         if buffer.isEmpty { return 0 }
-        let count = int32(buffer.count)
+        let count = int32(min(buffer.count, 1 << 30))
         let n = buffer.withUnsafeMutableBytes { raw in
             cfs_pread(Fd, raw.baseAddress!, count, offset)
         }
@@ -60,7 +60,8 @@ public struct File {
         if data.isEmpty { return }
         var written = 0
         while written < data.count {
-            let chunk = int32(data.count - written)
+            // A write takes at most 1 GiB: the count crosses as an int32.
+            let chunk = int32(min(data.count - written, 1 << 30))
             let n = data.withUnsafeBytes { raw in
                 cfs_write(Fd, raw.baseAddress! + written, chunk)
             }
@@ -79,7 +80,7 @@ public struct File {
         if data.isEmpty { return }
         var written = 0
         while written < data.count {
-            let chunk = int32(data.count - written)
+            let chunk = int32(min(data.count - written, 1 << 30))
             let curOffset = offset + int64(written)
             let n = data.withUnsafeBytes { raw in
                 cfs_pwrite(Fd, raw.baseAddress! + written, chunk, curOffset)
