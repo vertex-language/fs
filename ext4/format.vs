@@ -2,9 +2,10 @@
 // what mke2fs does, in Vertex, for tools that build disks for virtual
 // machines (Android's userdata, a container's root).
 //
-// Format writes an empty file system: a root directory and lost+found,
-// extents, 256-byte inodes, superblock copies in sparse groups, and a
-// journal; Linux mounts it as ext4, and e2fsck finds it clean.
+// Format writes a file system: a root directory and lost+found, and any
+// files it's given (FormatOptions.Files), extents, 256-byte inodes,
+// superblock copies in sparse groups, and a journal; Linux mounts it as
+// ext4, and e2fsck finds it clean. FormatBytes makes one in memory.
 package ext4
 
 import (
@@ -39,8 +40,26 @@ public struct FormatOptions {
     /// system comes back consistent after an unclean stop. File systems
     /// under 2048 blocks have none.
     public var Journal = true
+    /// Files the file system starts with, and the directories on their
+    /// way (made 0755, owned by root). They go in the first block group,
+    /// each file in one run of blocks, each directory in one block.
+    public var Files: [File] = []
 
     public init() {}
+}
+
+/// A file Format writes: its path from the root ("etc/hosts"), what it
+/// holds, and its permission bits; owned by root.
+public struct File {
+    public let Path: string
+    public let Data: [uint8]
+    public let Mode: uint16
+
+    public init(_ path: string, _ data: [uint8], mode: uint16 = 0o644) {
+        Path = path
+        Data = data
+        Mode = mode
+    }
 }
 
 // Feature bits.
@@ -69,9 +88,64 @@ public func IsExt(_ path: fs.Path) -> bool {
     return b[0] == 0x53 && b[1] == 0xEF
 }
 
-/// Makes `path` a `size`-byte disk image holding an empty ext4 file
-/// system. Whatever the file held is discarded; the image is sparse.
+/// Makes `path` a `size`-byte disk image holding an ext4 file system,
+/// empty but for `o.Files`. Whatever the file held is discarded; the
+/// image is sparse.
 public func Format(_ path: fs.Path, size: int64, _ o: FormatOptions = FormatOptions()) throws {
+    try format(size: size, o) {
+        let f = try fs.Create(path)
+        try f.SetLength(0)
+        try f.SetLength(size)
+        return fileSink(f)
+    }
+}
+
+/// A `size`-byte disk image holding an ext4 file system, empty but for
+/// `o.Files`, made in memory.
+public func FormatBytes(size: int, _ o: FormatOptions = FormatOptions()) throws -> [uint8] {
+    let s = bufferSink(size)
+    try format(size: int64(size), o) { s }
+    return s.B
+}
+
+/// Where format writes the file system's blocks.
+protocol sink {
+    func Write(_ b: [uint8], at: int64) throws
+    func Close()
+}
+
+final class fileSink: sink {
+    let f: fs.File
+
+    init(_ f: fs.File) {
+        self.f = f
+    }
+
+    func Write(_ b: [uint8], at: int64) throws {
+        try f.Write(b, at: at)
+    }
+
+    func Close() {
+        try? f.Close()
+    }
+}
+
+final class bufferSink: sink {
+    var B: [uint8]
+
+    init(_ n: int) {
+        B = [uint8](repeating: 0, count: n)
+    }
+
+    func Write(_ b: [uint8], at: int64) throws {
+        for i in 0..<b.count { B[int(at) + i] = b[i] }
+    }
+
+    func Close() {}
+}
+
+/// Lays the file system out, and only once it fits, opens where it goes and writes it.
+func format(size: int64, _ o: FormatOptions, _ open: () throws -> any sink) throws {
     let bs = o.BlockSize
     if bs != 1024 && bs != 2048 && bs != 4096 { throw FormatError.badOption("block size \(bs): it's 1024, 2048 or 4096") }
     if o.Label.utf8.count > 16 { throw FormatError.badOption("label \(o.Label) is longer than 16 bytes") }
@@ -110,6 +184,24 @@ public func Format(_ path: fs.Path, size: int64, _ o: FormatOptions = FormatOpti
     let lostFoundBlock = rootBlock + 1
     if lostFoundBlock >= layout[0].Start + layout[0].Count { throw FormatError.tooSmall(size) }
     taken[0] = 2
+    // Then the files and their directories: inodes from 12, blocks after
+    // lost+found's, all in group 0.
+    let root = try tree(o.Files)
+    let added = root.All
+    var next = lostFoundBlock + 1
+    for (i, n) in added.enumerated() {
+        let count = n.Dir ? 1 : (n.Data.count + bs - 1) / bs
+        if count > 32768 { throw FormatError.badOption("\(n.Name) is too big for one extent") }
+        n.Inode = firstInode + 1 + i
+        n.Block = next
+        n.Blocks = count
+        next += count
+    }
+    if next > layout[0].Start + layout[0].Count || firstInode + added.count > inodesPerGroup {
+        throw FormatError.tooSmall(size)
+    }
+    taken[0] += next - (lostFoundBlock + 1)
+    let addedDirs = added.filter { $0.Dir }.count
     let journalBlocks = o.Journal ? defaultJournalBlocks(blocks) : 0
     var journalStart = 0
     if journalBlocks > 0 {
@@ -123,10 +215,8 @@ public func Format(_ path: fs.Path, size: int64, _ o: FormatOptions = FormatOpti
         taken[found] += journalBlocks
     }
 
-    let f = try fs.Create(path)
-    defer { try? f.Close() }
-    try f.SetLength(0)
-    try f.SetLength(size)
+    let f = try open()
+    defer { f.Close() }
 
     let now = uint32(truncatingIfNeeded: fs.Timestamp.Now().UnixSeconds)
     var totalFreeBlocks = 0
@@ -142,7 +232,7 @@ public func Format(_ path: fs.Path, size: int64, _ o: FormatOptions = FormatOpti
         try f.Write(bb.B, at: int64(l.BlockBitmap) * int64(bs))
         // Inode bitmap: the reserved inodes and lost+found; past inodesPerGroup, set.
         var ib = Bytes(bs)
-        if g == 0 { for i in 0..<firstInode { ib.SetBit(i) } }
+        if g == 0 { for i in 0..<(firstInode + added.count) { ib.SetBit(i) } }
         for i in inodesPerGroup..<(bs * 8) { ib.SetBit(i) }
         try f.Write(ib.B, at: int64(l.InodeBitmap) * int64(bs))
         let d = g * 32
@@ -150,24 +240,36 @@ public func Format(_ path: fs.Path, size: int64, _ o: FormatOptions = FormatOpti
         desc.U32(d + 4, uint32(l.InodeBitmap))
         desc.U32(d + 8, uint32(l.InodeTable))
         desc.U16(d + 12, uint16(free))
-        desc.U16(d + 14, uint16(inodesPerGroup - (g == 0 ? firstInode : 0)))
-        desc.U16(d + 16, uint16(g == 0 ? 2 : 0))
+        desc.U16(d + 14, uint16(inodesPerGroup - (g == 0 ? firstInode + added.count : 0)))
+        desc.U16(d + 16, uint16(g == 0 ? 2 + addedDirs : 0))
     }
 
-    // The two directories: inodes in group 0's table, one block each.
-    try f.Write(inode(mode: 0x41ED, links: 3, block: rootBlock, count: 1, bs: bs, now: now).B,
-                at: int64(layout[0].InodeTable) * int64(bs) + int64((rootInode - 1) * inodeSize))
+    // The directories: inodes in group 0's table, one block each.
+    let tableAt = int64(layout[0].InodeTable) * int64(bs)
+    root.Inode = rootInode
+    root.Block = rootBlock
+    try f.Write(inode(mode: 0x41ED, links: uint16(3 + root.Subdirs), block: rootBlock, count: 1, bs: bs, now: now).B,
+                at: tableAt + int64((rootInode - 1) * inodeSize))
     try f.Write(inode(mode: 0x41C0, links: 2, block: lostFoundBlock, count: 1, bs: bs, now: now).B,
-                at: int64(layout[0].InodeTable) * int64(bs) + int64((lostFoundInode - 1) * inodeSize))
-    var root = Bytes(bs)
-    var at = root.Entry(0, inode: rootInode, name: ".", recLen: 12)
-    at = root.Entry(at, inode: rootInode, name: "..", recLen: 12)
-    _ = root.Entry(at, inode: lostFoundInode, name: "lost+found", recLen: bs - at)
-    try f.Write(root.B, at: int64(rootBlock) * int64(bs))
-    var lf = Bytes(bs)
-    at = lf.Entry(0, inode: lostFoundInode, name: ".", recLen: 12)
-    _ = lf.Entry(at, inode: rootInode, name: "..", recLen: bs - at)
-    try f.Write(lf.B, at: int64(lostFoundBlock) * int64(bs))
+                at: tableAt + int64((lostFoundInode - 1) * inodeSize))
+    try f.Write(try directory(rootInode, parent: rootInode, [(lostFoundInode, "lost+found", true)] + root.Entries, bs: bs).B,
+                at: int64(rootBlock) * int64(bs))
+    try f.Write(try directory(lostFoundInode, parent: rootInode, [], bs: bs).B, at: int64(lostFoundBlock) * int64(bs))
+
+    // The files and the directories they're in (a flat loop: vsc_TODO #56).
+    for d in [root] + added where d.Dir {
+        for c in d.Children { c.Parent = d.Inode }
+    }
+    for n in added {
+        let ino = n.Dir ? inode(mode: 0x4000 | n.Mode, links: uint16(2 + n.Subdirs), block: n.Block, count: 1, bs: bs, now: now)
+                        : inode(mode: 0x8000 | n.Mode, links: 1, block: n.Block, count: n.Blocks, size: n.Data.count, bs: bs, now: now)
+        try f.Write(ino.B, at: tableAt + int64((n.Inode - 1) * inodeSize))
+        if n.Dir {
+            try f.Write(try directory(n.Inode, parent: n.Parent, n.Entries, bs: bs).B, at: int64(n.Block) * int64(bs))
+        } else if !n.Data.isEmpty {
+            try f.Write(n.Data, at: int64(n.Block) * int64(bs))
+        }
+    }
 
     // The journal: a regular file of its own inode, its first block the
     // journal's superblock (big-endian), saying it's empty.
@@ -193,7 +295,7 @@ public func Format(_ path: fs.Path, size: int64, _ o: FormatOptions = FormatOpti
     sb.U32(4, uint32(blocks))
     sb.U32(8, uint32(blocks / 100 * o.ReservedPercent))
     sb.U32(12, uint32(totalFreeBlocks))
-    sb.U32(16, uint32(inodes - firstInode))
+    sb.U32(16, uint32(inodes - firstInode - added.count))
     sb.U32(20, uint32(firstData))
     sb.U32(24, uint32(bs == 1024 ? 0 : (bs == 2048 ? 1 : 2)))
     sb.U32(28, uint32(bs == 1024 ? 0 : (bs == 2048 ? 1 : 2)))
@@ -270,25 +372,30 @@ func defaultJournalBlocks(_ blocks: int) -> int {
     return 32768
 }
 
-/// An inode whose `count` blocks from `block` are mapped by one extent.
-func inode(mode: uint16, links: uint16, block: int, count: int, bs: int, now: uint32) -> Bytes {
+/// An inode whose `count` blocks from `block` are mapped by one extent
+/// (none when `count` is 0), `size` bytes long (all its blocks unless given).
+func inode(mode: uint16, links: uint16, block: int, count: int, size: int? = nil, bs: int, now: uint32) -> Bytes {
     var b = Bytes(inodeSize)
+    let bytes = size ?? count * bs
     b.U16(0, mode)
-    b.U32(4, uint32(count * bs))
+    b.U32(4, uint32(truncatingIfNeeded: bytes))
     b.U32(8, now)
     b.U32(12, now)
     b.U32(16, now)
     b.U16(26, links)
     b.U32(28, uint32(count * bs / 512))
     b.U32(32, 0x80000)          // extents
-    b.U16(40, 0xF30A)           // extent header: magic, 1 entry, room for 4, depth 0
-    b.U16(42, 1)
+    b.U16(40, 0xF30A)           // extent header: magic, 1 entry (or none), room for 4, depth 0
+    b.U16(42, count > 0 ? 1 : 0)
     b.U16(44, 4)
     b.U16(46, 0)
-    b.U32(52, 0)                // the extent: file block 0, `count` blocks, at `block`
-    b.U16(56, uint16(count))
-    b.U16(58, 0)
-    b.U32(60, uint32(block))
+    if count > 0 {
+        b.U32(52, 0)            // the extent: file block 0, `count` blocks, at `block`
+        b.U16(56, uint16(count))
+        b.U16(58, 0)
+        b.U32(60, uint32(block))
+    }
+    b.U32(108, uint32(truncatingIfNeeded: bytes >> 32))
     b.U16(128, uint16(extraIsize))
     b.U32(144, now)             // creation time
     return b
@@ -331,13 +438,91 @@ struct Bytes {
         B[i / 8] |= uint8(1) << uint8(i % 8)
     }
 
-    /// A directory entry at `at`; returns where the next one goes.
-    mutating func Entry(_ at: int, inode: int, name: string, recLen: int) -> int {
+    /// A directory entry at `at`, for a directory or a regular file;
+    /// returns where the next one goes.
+    mutating func Entry(_ at: int, inode: int, name: string, recLen: int, dir: bool = true) -> int {
         U32(at, uint32(inode))
         U16(at + 4, uint16(recLen))
         B[at + 6] = uint8(name.utf8.count)
-        B[at + 7] = 2           // a directory
+        B[at + 7] = dir ? 2 : 1
         for (i, c) in name.utf8.enumerated() { B[at + 8 + i] = c }
         return at + recLen
     }
+}
+
+/// A file or directory Format adds, and where it goes.
+final class Node {
+    let Name: string
+    let Dir: bool
+    let Data: [uint8]
+    let Mode: uint16
+    var Children: [Node] = []
+    var Inode = 0
+    var Block = 0
+    var Blocks = 0
+    /// The inode of the directory it's in.
+    var Parent = 0
+
+    init(_ name: string, dir: bool, data: [uint8] = [], mode: uint16 = 0o755) {
+        Name = name
+        Dir = dir
+        Data = data
+        Mode = mode
+    }
+
+    /// How many directories it holds (each links back with its "..").
+    var Subdirs: int { Children.filter { $0.Dir }.count }
+
+    /// Its directory entries after "." and "..": inode, name, whether a directory.
+    var Entries: [(int, string, bool)] { Children.map { ($0.Inode, $0.Name, $0.Dir) } }
+
+    /// Everything below this node, each directory before what it holds.
+    var All: [Node] {
+        var out: [Node] = []
+        for c in Children {
+            out.append(c)
+            out.append(contentsOf: c.All)
+        }
+        return out
+    }
+}
+
+/// The directory tree `files` make, under a root node.
+func tree(_ files: [File]) throws -> Node {
+    let root = Node("", dir: true)
+    for f in files {
+        let parts = f.Path.split(separator: "/").map { string($0) }
+        if parts.isEmpty { throw FormatError.badOption("a file with no name") }
+        var at = root
+        for (i, p) in parts.enumerated() {
+            if p == "." || p == ".." || p.utf8.count > 255 || (at === root && p == "lost+found") {
+                throw FormatError.badOption("\(f.Path): \(p) can't be a name here")
+            }
+            let last = i == parts.count - 1
+            if let existing = at.Children.first(where: { $0.Name == p }) {
+                if last || !existing.Dir { throw FormatError.badOption("\(f.Path) is given twice, or under a file") }
+                at = existing
+            } else if last {
+                at.Children.append(Node(p, dir: false, data: f.Data, mode: f.Mode & 0o7777))
+            } else {
+                let d = Node(p, dir: true)
+                at.Children.append(d)
+                at = d
+            }
+        }
+    }
+    return root
+}
+
+/// A directory's one block: ".", "..", then `entries` (inode, name, whether a directory).
+func directory(_ inode: int, parent: int, _ entries: [(int, string, bool)], bs: int) throws -> Bytes {
+    var b = Bytes(bs)
+    let all = [(inode, ".", true), (parent, "..", true)] + entries
+    var at = 0
+    for (i, e) in all.enumerated() {
+        let need = (8 + e.1.utf8.count + 3) / 4 * 4
+        if at + need > bs { throw FormatError.badOption("a directory holds more than one block of entries") }
+        at = b.Entry(at, inode: e.0, name: e.1, recLen: i == all.count - 1 ? bs - at : need, dir: e.2)
+    }
+    return b
 }

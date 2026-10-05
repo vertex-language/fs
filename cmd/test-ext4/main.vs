@@ -27,6 +27,16 @@ func fsck(_ path: string) async -> bool? {
     return nil
 }
 
+/// A file's contents as debugfs reads them from an image, or nil where there is no debugfs.
+func debugfsCat(_ image: string, _ file: string) async -> string? {
+    for d in ["/opt/homebrew/opt/e2fsprogs/sbin/debugfs", "/usr/local/opt/e2fsprogs/sbin/debugfs", "/sbin/debugfs", "/usr/sbin/debugfs"]
+        where fs.Exists(fs.Path(d)) {
+        guard let out = try? await process.Command(d, ["-R", "cat \(file)", image]).Output(), out.Status.Success else { return nil }
+        return string(decoding: out.Stdout, as: UTF8.self)
+    }
+    return nil
+}
+
 /// Whether the superblock's has_journal feature is set and names inode 8.
 func hasJournal(_ path: fs.Path) -> bool {
     guard let f = try? fs.Open(path) else { return false }
@@ -62,6 +72,37 @@ func main() async -> int32 {
         if let clean = await fsck(dir + "/test-ext4-1k.img") { check(clean, "e2fsck finds it clean") }
     } catch {
         check(false, "1 KiB blocks: \(error)")
+    }
+    // Files, in directories, on a file and in memory.
+    var withFiles = ext4.FormatOptions()
+    withFiles.BlockSize = 1024
+    let big = [uint8](repeating: 0x61, count: 3000)
+    withFiles.Files = [ext4.File("etc/permissions/feature.xml", [uint8]("<permissions />\n".utf8)),
+                       ext4.File("etc/empty", []), ext4.File("bin/tool", big, mode: 0o755), ext4.File("readme", [uint8]("hi\n".utf8))]
+    do {
+        let path = dir + "/test-ext4-files.img"
+        try ext4.Format(fs.Path(path), size: 4 << 20, withFiles)
+        if let clean = await fsck(path) { check(clean, "with files, e2fsck finds it clean") }
+        if let text = await debugfsCat(path, "/etc/permissions/feature.xml") { check(text == "<permissions />\n", "a file in a directory reads back") }
+        if let text = await debugfsCat(path, "/bin/tool") { check(text.utf8.count == 3000, "a three-block file reads back whole") }
+        let bytes = try ext4.FormatBytes(size: 4 << 20, withFiles)
+        check(bytes.count == 4 << 20 && bytes[1024 + 0x38] == 0x53 && bytes[1024 + 0x39] == 0xEF, "FormatBytes makes one in memory")
+        let mem = dir + "/test-ext4-memory.img"
+        let f = try fs.Create(fs.Path(mem))
+        try f.Write(bytes, at: 0)
+        try f.Close()
+        if let clean = await fsck(mem) { check(clean, "e2fsck finds that clean too") }
+        if let text = await debugfsCat(mem, "/readme") { check(text == "hi\n", "and its files read back") }
+    } catch {
+        check(false, "with files: \(error)")
+    }
+    var twice = ext4.FormatOptions()
+    twice.Files = [ext4.File("a", []), ext4.File("a/b", [])]
+    do {
+        _ = try ext4.FormatBytes(size: 1 << 20, twice)
+        check(false, "a file used as a directory is refused")
+    } catch {
+        check(true, "a file used as a directory is refused (\(error))")
     }
     do {
         try ext4.Format(fs.Path(dir + "/test-ext4-none.img"), size: 4096)

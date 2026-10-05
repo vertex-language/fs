@@ -12,7 +12,7 @@ File system library providing file operations, capability directory handles, pat
 
 - **`fs`**: Core file system operations (`fs.ReadFile`, `fs.WriteFile`, `fs.Path`, `fs.File`, `fs.Dir`, `fs.ReadDir`, `fs.Metadata`, `fs.FileSystem`).
 - **`fs/memory`**: In-memory file system implementation (`memory.MemoryFileSystem`) for testing and virtual environments.
-- **`fs/ext4`**: Makes ext4 file systems in disk images (`ext4.Format(path, size:)`, what mke2fs does) and recognizes them (`ext4.IsExt`): a root directory and lost+found, extents, 256-byte inodes, sparse superblock copies and a journal (sized as mke2fs sizes it). Linux mounts the result as ext4 and e2fsck finds it clean (`cmd/test-ext4` checks with e2fsck where the machine has it). Android's userdata disks are made with it.
+- **`fs/ext4`**: Makes ext4 file systems in disk images (`ext4.Format(path, size:)`, what mke2fs does, or in memory with `ext4.FormatBytes`), empty or holding the files given (`FormatOptions.Files`: paths, contents and modes, in the first block group), and recognizes them (`ext4.IsExt`): a root directory and lost+found, extents, 256-byte inodes, sparse superblock copies and a journal (sized as mke2fs sizes it). Linux mounts the result as ext4 and e2fsck finds it clean (`cmd/test-ext4` checks with e2fsck where the machine has it). Android's userdata disks are made with it, and vm's /oem partition for Android 9.
 - **`fs/mmap`**: A file mapped into memory, read-only (`mmap.Map(path)` → `mmap.Mapping`). Its bytes are read in place and unmapped when the last reference goes. Model weights load through it. Built on its own C++ module, `fs.mmap` (`mmap` on POSIX, `MapViewOfFile` on Windows).
 
 `fs.File` is an `io.Reader`, `io.Writer`, `io.Seeker` and `io.Closer`, so the `io` package's functions and adapters take it: `io.Copy(from: &file, to: &socket)`, `io.BufferedReader(file).ReadLine()`. `fs.SeekFrom` is `io.SeekFrom`.
@@ -127,7 +127,7 @@ fs/                             # import "fs"
 ├── filesystem.vs               # FileSystem protocol & Local implementation
 ├── error.vs                    # FsError enum & error translation
 ├── memory/                     # import "fs/memory": MemoryFileSystem conforming to FileSystem
-├── ext4/                       # import "fs/ext4": Format and IsExt for ext4 disk images
+├── ext4/                       # import "fs/ext4": Format, FormatBytes and IsExt for ext4 disk images
 ├── mmap/                       # import "fs/mmap": mmap.vs + native.cpp (export module fs.mmap;)
 └── cmd/
     ├── check/                  # Test suite covering paths, files, dirs, errors, memory fs
